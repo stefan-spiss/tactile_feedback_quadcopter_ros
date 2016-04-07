@@ -1,0 +1,12 @@
+<launch>
+	<node name="tactile_feedback" pkg="tactile_feedback_quadcopter_ros" type="tactile_feedback_node">
+		<param name="feedback_method" value="2"/>
+		<param name="serial_port" value="/dev/ttyUSB0"/>
+		<param name="distance_threshold_fardest" value="1.2"/>
+		<param name="distance_threshold_middle" value="0.8"/>
+		<param name="distance_threshold_nearest" value="0.4"/>
+		<param name="intensity_fardest" value="100"/>
+		<param name="intensity_middle" value="150"/>
+		<param name="intensity_nearest" value="250"/>
+	</node>
+</launch>
