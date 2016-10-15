@@ -2,6 +2,7 @@
 #include <std_srvs/Empty.h>
 #include <tactile_feedback_quadcopter_ros/ObstacleObserver.h>
 #include <tactile_feedback_quadcopter_ros/Serial.h>
+#include <tactile_feedback_quadcopter_ros/ChangeFeedbackMethod.h>
 
 #define SERIAL_START_BIT	0x01
 #define SERIAL_END_BIT		0x02
@@ -16,6 +17,11 @@ float MIDDLE = 0.8;
 float NEAREST = 0.4;
 
 bool PAUSED = false;
+
+int feedback_method = 0;
+void (*feedback_function)(ObstacleObserver&, Serial&);
+std::string serial_port = "/dev/ttyUSB0";
+Serial serial(serial_port);
 
 void feedback_function_nearest(ObstacleObserver& observer, Serial& serial) {
 	unsigned char msg[6];
@@ -142,7 +148,7 @@ void feedback_function_all_simultaneous(ObstacleObserver& observer,
 	serial.write6Byte(msg);
 }
 
-int direction = 0;
+int directionAlternating = 0;
 
 void feedback_function_all_alternating(ObstacleObserver& observer,
 		Serial& serial) {
@@ -160,7 +166,7 @@ void feedback_function_all_alternating(ObstacleObserver& observer,
 		int count = 0;
 
 		while (isNotSet && count < 4) {
-			switch (direction) {
+			switch (directionAlternating) {
 			case 0:
 				distFront = observer.getDistFront();
 				if (distFront < NEAREST) {
@@ -173,7 +179,7 @@ void feedback_function_all_alternating(ObstacleObserver& observer,
 					msg[1] = INTENSITY_FARDEST;
 					isNotSet = false;
 				}
-				direction++;
+				directionAlternating++;
 				break;
 			case 1:
 				distBack = observer.getDistBack();
@@ -187,7 +193,7 @@ void feedback_function_all_alternating(ObstacleObserver& observer,
 					msg[2] = INTENSITY_FARDEST;
 					isNotSet = false;
 				}
-				direction++;
+				directionAlternating++;
 				break;
 			case 2:
 				distLeft = observer.getDistLeft();
@@ -201,7 +207,7 @@ void feedback_function_all_alternating(ObstacleObserver& observer,
 					msg[3] = INTENSITY_FARDEST;
 					isNotSet = false;
 				}
-				direction++;
+				directionAlternating++;
 				break;
 			case 3:
 				distRight = observer.getDistRight();
@@ -215,7 +221,7 @@ void feedback_function_all_alternating(ObstacleObserver& observer,
 					msg[4] = INTENSITY_FARDEST;
 					isNotSet = false;
 				}
-				direction = 0;
+				directionAlternating = 0;
 				break;
 			}
 			count++;
@@ -224,16 +230,42 @@ void feedback_function_all_alternating(ObstacleObserver& observer,
 	serial.write6Byte(msg);
 }
 
-bool callback_pauseFeedback(std_srvs::Empty::Request request,
+bool callback_pauseFeedback(std_srvs::Empty::Request& request,
 		std_srvs::Empty::Response& response) {
 	PAUSED = true;
 	return true;
 }
 
-bool callback_unpauseFeedback(std_srvs::Empty::Request request,
+bool callback_unpauseFeedback(std_srvs::Empty::Request& request,
 		std_srvs::Empty::Response& response) {
 	PAUSED = false;
 	return true;
+}
+
+bool callback_changeFeedbackMethod(
+		tactile_feedback_quadcopter_ros::ChangeFeedbackMethod::Request& request,
+		tactile_feedback_quadcopter_ros::ChangeFeedbackMethod::Response& response) {
+	if (request.method != feedback_method) {
+		PAUSED = true;
+		feedback_method = request.method;
+		switch (feedback_method) {
+		case 0:
+			feedback_function = &feedback_function_nearest;
+			break;
+		case 1:
+			feedback_function = &feedback_function_all_simultaneous;
+			break;
+		case 2:
+			feedback_function = &feedback_function_all_alternating;
+			break;
+		}
+		response.success = true;
+		PAUSED = false;
+
+		return true;
+	}
+	response.success = false;
+	return false;
 }
 
 void render_all_feedback_once(Serial& serial) {
@@ -273,9 +305,9 @@ int main(int argc, char** argv) {
 	std::string sensor_topic_back = "/sonar_back";
 	std::string sensor_topic_right = "/sonar_right";
 	std::string sensor_topic_left = "/sonar_left";
-	std::string serial_port = "/dev/ttyUSB0";
 	std::string service_name_pause = "/tactile_feedback/pauseFeedback";
 	std::string service_name_unpause = "/tactile_feedback/unpauseFeedback";
+	std::string service_name_change = "/tactile_feedback/changeMethod";
 
 	if (local_node.getParam("feedback_method", feedback_method)) {
 		std::cout << "Set parameter feedback_method to " << feedback_method
@@ -321,6 +353,10 @@ int main(int argc, char** argv) {
 		std::cout << "Set parameter service_name_unpause to "
 				<< service_name_unpause << std::endl;
 	}
+	if (local_node.getParam("service_name_change", service_name_change)) {
+		std::cout << "Set parameter service_name_change to "
+				<< service_name_change << std::endl;
+	}
 
 	int tmp;
 	if (local_node.getParam("intensity_fardest", tmp)) {
@@ -365,7 +401,6 @@ int main(int argc, char** argv) {
 
 	ObstacleObserver obstacle_observer(distance_thresholds);
 
-	Serial serial(serial_port);
 	if (serial.setupParameters() == false) {
 		std::cerr << "Couldn't setup connection to tactile feedback controller."
 				<< std::endl;
@@ -399,7 +434,10 @@ int main(int argc, char** argv) {
 			std_srvs::Empty::Request, std_srvs::Empty::Response>(
 			service_name_unpause, callback_unpauseFeedback);
 
-	void (*feedback_function)(ObstacleObserver&, Serial&);
+	ros::ServiceServer changeMethod_srv = node.advertiseService<
+			tactile_feedback_quadcopter_ros::ChangeFeedbackMethod::Request,
+			tactile_feedback_quadcopter_ros::ChangeFeedbackMethod::Response>(
+			service_name_change, callback_changeFeedbackMethod);
 
 	switch (feedback_method) {
 	case 0:
@@ -413,7 +451,7 @@ int main(int argc, char** argv) {
 		break;
 	}
 
-	ros::Rate rate(10.0);
+	ros::Rate rate(12.0);
 
 	unsigned char zero_msg[6];
 	zero_msg[0] = SERIAL_START_BIT;
