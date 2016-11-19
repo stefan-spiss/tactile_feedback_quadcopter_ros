@@ -407,6 +407,9 @@ int main(int argc, char** argv) {
 		return EXIT_FAILURE;
 	}
 
+	// Sleep, to let the microcontroller be reseted
+	sleep(4);
+
 //Render all feedbacks once for recognition
 	render_all_feedback_once(serial);
 
